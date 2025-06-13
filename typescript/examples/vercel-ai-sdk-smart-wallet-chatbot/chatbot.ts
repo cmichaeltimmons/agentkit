@@ -4,7 +4,9 @@ import {
   erc721ActionProvider,
   pythActionProvider,
   walletActionProvider,
+  uniswapActionProvider,
   SmartWalletProvider,
+  wethActionProvider,
 } from "@coinbase/agentkit";
 import { getVercelAITools } from "@coinbase/agentkit-vercel-ai-sdk";
 import { openai } from "@ai-sdk/openai";
@@ -103,13 +105,40 @@ async function initializeAgent() {
 
     const signer = privateKeyToAccount(privateKey);
 
-    // Configure Smart Wallet Provider
-    const walletProvider = await SmartWalletProvider.configureWithWallet({
-      networkId,
-      signer,
-      smartWalletAddress: walletData?.smartWalletAddress,
-      paymasterUrl: undefined, // Sponsor transactions: https://docs.cdp.coinbase.com/paymaster/docs/welcome
-    });
+    let walletProvider;
+    try {
+      // Configure Smart Wallet Provider
+      walletProvider = await SmartWalletProvider.configureWithWallet({
+        networkId,
+        signer,
+        smartWalletAddress: walletData?.smartWalletAddress,
+        paymasterUrl: undefined, // Sponsor transactions: https://docs.cdp.coinbase.com/paymaster/docs/welcome
+      });
+    } catch (error: any) {
+      // Handle the case where the smart wallet already exists
+      if (error?.httpCode === 409 || error?.apiCode === 'already_exists' || error?.message?.includes('already exists')) {
+        console.log("Smart wallet already exists. Deleting wallet data file and creating a new one...");
+        
+        // Delete the existing wallet data file to start fresh
+        if (fs.existsSync(walletDataFile)) {
+          fs.unlinkSync(walletDataFile);
+          console.log(`Deleted existing wallet data file: ${walletDataFile}`);
+        }
+        
+        const newPrivateKey = generatePrivateKey();
+        const newSigner = privateKeyToAccount(newPrivateKey);
+        
+        walletProvider = await SmartWalletProvider.configureWithWallet({
+          networkId,
+          signer: newSigner,
+          paymasterUrl: undefined,
+        });
+        
+        privateKey = newPrivateKey;
+      } else {
+        throw error;
+      }
+    }
 
     const agentKit = await AgentKit.from({
       walletProvider,
@@ -121,6 +150,8 @@ async function initializeAgent() {
         erc721ActionProvider(),
         pythActionProvider(),
         walletActionProvider(),
+        uniswapActionProvider(),
+        wethActionProvider(),
       ],
     });
 
